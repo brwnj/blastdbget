@@ -31,6 +31,28 @@ Complete  : Files available at /home/jmbrown/blast/latest
 
 Note: If you want `blastdbcheck` to fully function, you should be grabbing `-d taxdb`.
 
+Not specifying `-d` will list Blast DBs that are available.
+
+```
+$ python blastdbget.py
+Info      : Communicating with Blast server
+Usage     : Set `-d` to an available database:
+16SMicrobial
+Representative_Genomes
+cdd_delta
+env_nr
+env_nt
+est
+est_human
+est_mouse
+est_others
+gss
+gss_annot
+htgs
+human_genomic
+...
+```
+
 # Results
 ```
 /home/jmbrown/blast
