@@ -92,6 +92,15 @@ def file_list(url, path=None):
     return files
 
 
+def show_available(files):
+    available = set([f.partition(".")[0] for f in files if f.endswith(".gz")])
+    available = list(available)
+    available.sort()
+    log('Usage', 'Set `-d` to at least one available database: \n{}',
+        "\n".join(available))
+    sys.exit(1)
+
+
 def filter_file_list(files, targets):
     """
     >>> import re
@@ -160,10 +169,11 @@ def cleanup(files):
 
 
 @click.command()
-@click.argument('output', type=click.Path())
-@click.option('-d', '--database', required=True, multiple=True,
-              help='Databases to download, eg. -d nr. To add multiple options, '
-              'use this parameter multiple times.')
+@click.argument('output', required=False, type=click.Path())
+@click.option('-d', '--database', multiple=True,
+              help='Databases to download, eg. "-d nr". Not specifying will '
+              'list the available databases. To add multiple databases, use '
+              'this parameter multiple times.')
 @click.option('-t', '--threads', type=int, default=8, show_default=True,
               help='The number of concurrent processes (downloads, '
               'extractions, etc.)')
@@ -172,14 +182,20 @@ def download(output, database, threads):
     Downloads listed databases to the output/<date> folder, validates downloads
     using md5sum, extracts .tar.gz files, then cleans up the output folder.
     """
-    # check dependencies
     check_dependencies(REQUIRES)
-    output = os.path.abspath(output)
-    log('Info', 'Using {} as parent directory', output)
 
     # get the contents of the remote blast dir
     log('Info', 'Communicating with Blast server')
     remote_files = file_list(BLAST_URL, BLAST_PATH)
+
+    if not database:
+        show_available(remote_files)
+
+    if output is None:
+        output = os.path.abspath('.')
+    else:
+        output = os.path.abspath(output)
+    log('Info', 'Using {} as parent directory', output)
 
     # filter the list for only what we want
     to_download = filter_file_list(remote_files, database)
