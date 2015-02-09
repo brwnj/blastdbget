@@ -96,7 +96,7 @@ def show_available(files):
     available = set([f.partition(".")[0] for f in files if f.endswith(".gz")])
     available = list(available)
     available.sort()
-    log('Usage', 'Set `-d` to at least one available database: \n{}',
+    log('Usage', 'Set `-d` to an available database: \n{}',
         "\n".join(available))
     sys.exit(1)
 
