@@ -1,6 +1,22 @@
 # Why
 We want distinct databases versioned by date rather than incremental updates
-via `update_blastdb.pl`.
+via `update_blastdb.pl`. Something like:
+```
+/home/jmbrown/blast
+├── 2015-02-01
+│   ├── nr.nhr
+│   ├── nr.nin
+│   └── nr.nnd
+├── 2015-01-01
+│   ├── nr.nhr
+│   ├── nr.nin
+│   └── nr.nnd
+├── 2014-12-01
+│   ├── nr.nhr
+│   ├── nr.nin
+│   └── nr.nnd
+└── latest -> /home/jmbrown/blast/2015-02-01
+```
 
 # Requires
 + python
