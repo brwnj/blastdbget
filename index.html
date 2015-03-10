@@ -1,0 +1,156 @@
+<!doctype html>
+<html>
+  <head>
+    <meta charset="utf-8">
+    <meta http-equiv="X-UA-Compatible" content="chrome=1">
+    <title>blastdbget by brwnj</title>
+
+    <link rel="stylesheet" href="stylesheets/styles.css">
+    <link rel="stylesheet" href="stylesheets/pygment_trac.css">
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no">
+    <!--[if lt IE 9]>
+    <script src="//html5shiv.googlecode.com/svn/trunk/html5.js"></script>
+    <![endif]-->
+  </head>
+  <body>
+    <div class="wrapper">
+      <header>
+        <h1>blastdbget</h1>
+        <p>Download Blast databases from ftp.ncbi.nlm.nih.gov/blast/db, validate, and extract.</p>
+
+        <p class="view"><a href="https://github.com/brwnj/blastdbget">View the Project on GitHub <small>brwnj/blastdbget</small></a></p>
+
+
+        <ul>
+          <li><a href="https://github.com/brwnj/blastdbget/zipball/master">Download <strong>ZIP File</strong></a></li>
+          <li><a href="https://github.com/brwnj/blastdbget/tarball/master">Download <strong>TAR Ball</strong></a></li>
+          <li><a href="https://github.com/brwnj/blastdbget">View On <strong>GitHub</strong></a></li>
+        </ul>
+      </header>
+      <section>
+        <h1>
+<a id="why" class="anchor" href="#why" aria-hidden="true"><span class="octicon octicon-link"></span></a>Why</h1>
+
+<p>We want distinct databases versioned by date rather than incremental updates
+via <code>update_blastdb.pl</code>. Something like:</p>
+
+<pre><code>/home/jmbrown/blast
+├── 2015-02-01
+│   ├── nr.nhr
+│   ├── nr.nin
+│   └── nr.nnd
+├── 2015-01-01
+│   ├── nr.nhr
+│   ├── nr.nin
+│   └── nr.nnd
+├── 2014-12-01
+│   ├── nr.nhr
+│   ├── nr.nin
+│   └── nr.nnd
+└── latest -&gt; /home/jmbrown/blast/2015-02-01
+</code></pre>
+
+<h1>
+<a id="requires" class="anchor" href="#requires" aria-hidden="true"><span class="octicon octicon-link"></span></a>Requires</h1>
+
+<ul>
+<li>python (2.7+) with <code>click</code> for argument parsing</li>
+<li>wget</li>
+<li>md5sum</li>
+<li>tar</li>
+</ul>
+
+<h1>
+<a id="running" class="anchor" href="#running" aria-hidden="true"><span class="octicon octicon-link"></span></a>Running</h1>
+
+<pre><code>$ blastdbget -d 16SMicrobial -d est -d taxdb -d gss_annot $HOME/blast
+</code></pre>
+
+<p>Output:</p>
+
+<pre><code>Info      : Using /home/jmbrown/blast as parent directory
+Info      : Communicating with Blast server
+Info      : Found 8 files matching databases: [16SMicrobial, est, taxdb, gss_annot]
+Info      : Downloading 8 files
+Jobs Ran + Running  [####################################]  100%
+Info      : Validating 4 archives
+Jobs Ran + Running  [####################################]  100%
+Info      : Extracting 4 archives
+Jobs Ran + Running  [####################################]  100%
+Info      : Cleaning up tar files
+Complete  : Files available at /home/jmbrown/blast/latest
+</code></pre>
+
+<p>Note: If you want <code>blastdbcheck</code> to fully function, you should be grabbing <code>-d taxdb</code>.</p>
+
+<p>Not specifying <code>-d</code> will list Blast DBs that are available.</p>
+
+<pre><code>$ python blastdbget.py
+Info      : Communicating with Blast server
+Usage     : Set `-d` to an available database:
+16SMicrobial
+Representative_Genomes
+cdd_delta
+env_nr
+env_nt
+est
+est_human
+est_mouse
+est_others
+gss
+gss_annot
+htgs
+human_genomic
+...
+</code></pre>
+
+<h1>
+<a id="results" class="anchor" href="#results" aria-hidden="true"><span class="octicon octicon-link"></span></a>Results</h1>
+
+<pre><code>/home/jmbrown/blast
+├── 2015-02-09
+│   ├── 16SMicrobial.nhr
+│   ├── 16SMicrobial.nin
+│   ├── 16SMicrobial.nnd
+│   ├── 16SMicrobial.nni
+│   ├── 16SMicrobial.nog
+│   ├── 16SMicrobial.nsd
+│   ├── 16SMicrobial.nsi
+│   ├── 16SMicrobial.nsq
+│   ├── est.nal
+│   ├── gss_annot.00.nhr
+│   ├── gss_annot.00.nin
+│   ├── gss_annot.00.nnd
+│   ├── gss_annot.00.nni
+│   ├── gss_annot.00.nog
+│   ├── gss_annot.00.nsd
+│   ├── gss_annot.00.nsi
+│   ├── gss_annot.00.nsq
+│   ├── gss.nal
+│   ├── taxdb.btd
+│   └── taxdb.bti
+└── latest -&gt; /home/jmbrown/blast/2015-02-09
+</code></pre>
+
+<h1>
+<a id="finish-up" class="anchor" href="#finish-up" aria-hidden="true"><span class="octicon octicon-link"></span></a>Finish up</h1>
+
+<p>Set <code>BLASTDB</code> to <code>latest</code>.</p>
+
+<pre><code>export BLASTDB=/home/jmbrown/blast/latest
+</code></pre>
+
+<p>We do monthly updates:</p>
+
+<pre><code>0 0 1 * * blastdbget -t 8 -d nr -d nt -d taxdb /mnt/databases/NCBI/blast
+</code></pre>
+      </section>
+      <footer>
+        <p>This project is maintained by <a href="https://github.com/brwnj">brwnj</a></p>
+        <p><small>Hosted on GitHub Pages &mdash; Theme by <a href="https://github.com/orderedlist">orderedlist</a></small></p>
+      </footer>
+    </div>
+    <script src="javascripts/scale.fix.js"></script>
+    
+  </body>
+</html>
