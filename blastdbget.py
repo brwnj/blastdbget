@@ -215,6 +215,7 @@ def download(output, database, threads):
 
     # create local directory structure and start working there
     today = time.strftime("%Y-%m-%d")
+    # TODO: consider removing existing .tar.gz files
     results = safe_makedir(os.path.join(output, today))
     os.chdir(results)
 
