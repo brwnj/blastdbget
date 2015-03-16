@@ -168,6 +168,22 @@ def cleanup(files):
         os.remove(f)
 
 
+def is_mount(path):
+    assert path.startswith('/')
+    dirs = path.split('/')
+    # remove initial slash from list
+    dirs.remove('')
+    # add slash back onto first entry
+    dirs[0] = '/' + dirs[0]
+    root = dirs[0]
+    for i in range(len(dirs) - 1):
+        path = os.path.join(root, dirs[i])
+        if os.path.ismount(path):
+            return True
+        root = path
+    return False
+
+
 @click.command()
 @click.argument('output', required=False, type=click.Path())
 @click.option('-d', '--database', multiple=True,
@@ -191,10 +207,15 @@ def download(output, database, threads):
     if not database:
         show_available(remote_files)
 
+    # output must point to a mounted location
     if output is None:
         output = os.path.abspath('.')
     else:
         output = os.path.abspath(output)
+
+    if not is_mount(output):
+        sys.exit("Output directory (%s) is not on a mounted volume." % output)
+
     log('Info', 'Using {} as parent directory', output)
 
     # filter the list for only what we want
