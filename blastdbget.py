@@ -11,7 +11,7 @@ from contextlib import contextmanager
 from distutils.spawn import find_executable
 
 
-REQUIRES = ['md5sum', 'tar', 'wget']
+REQUIRES = ['blastdbcheck', 'md5sum', 'tar', 'wget']
 BLAST_URL = 'ftp.ncbi.nlm.nih.gov'
 BLAST_PATH = 'blast/db'
 
@@ -168,7 +168,31 @@ def cleanup(files):
         os.remove(f)
 
 
-@click.command()
+def update_permissions(path):
+    path = os.path.abspath(path)
+    for f in os.listdir(path):
+        try:
+            os.chmod(os.path.join(path, f), 0755)
+        except OSError:
+            sys.exit("Unable to update permissions on %s" % path)
+    log('Info', "File permissions for {} have been properly updated.", path)
+
+
+def validate_dbs(path):
+    os.chdir(path)
+    cmd = "blastdbcheck -dir {path} -random 10".format(path=path)
+    rc = subprocess.call(cmd, shell=True)
+    return True if rc == 0 else False
+
+
+def create_symlink(src, dest):
+    if os.path.exists(dest):
+        os.unlink(dest)
+    os.symlink(src, dest)
+    return dest
+
+
+@click.command(context_settings={'help_option_names':['-h', '--help']})
 @click.argument('output', required=False, type=click.Path())
 @click.option('-d', '--database', multiple=True,
               help='Databases to download, eg. "-d nr". Not specifying will '
@@ -208,8 +232,7 @@ def download(output, database, threads):
     log('Info', 'Found {} files matching databases: [{}]', total_files,
         ', '.join(database))
 
-    # to better take advantage of how we're parallelizing jobs
-    # groups by .gz and .md5
+    # groups by .gz and .md5; hacky parallelization of jobs
     to_download.sort(key=lambda x: os.path.splitext(x)[1])
     wget_cmds, md5_cmds, tar_cmds = build_commands(to_download)
 
@@ -232,13 +255,12 @@ def download(output, database, threads):
     log('Info', 'Cleaning up tar files')
     cleanup(to_download)
 
-    # symlink most recent DB to "latest"
-    os.chdir(output)
-    latest_dir = os.path.join(output, "latest")
-    if os.path.exists(latest_dir):
-        os.unlink(latest_dir)
-    os.symlink(results, "latest")
+    update_permissions(results)
+    db_pass = validate_dbs(results)
+    if not db_pass:
+        sys.exit("Unable to validate Blast DBs. Not creating symlink.")
 
+    latest_dir = create_symlink(results, os.path.join(output, "latest"))
     log('Complete', 'Files available at {}', latest_dir)
 
 if __name__ == '__main__':
