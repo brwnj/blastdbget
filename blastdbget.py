@@ -180,7 +180,7 @@ def update_permissions(path):
 
 def validate_dbs(path):
     os.chdir(path)
-    cmd = "blastdbcheck -dir {path} -random 10".format(path=path)
+    cmd = "blastdbcheck -dir {path} -random 10 -verbosity 4 -no_isam".format(path=path)
     rc = subprocess.call(cmd, shell=True)
     return True if rc == 0 else False
 
