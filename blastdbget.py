@@ -1,23 +1,46 @@
-import click
+"""
+Downloads listed databases to the output folder, validates downloads
+using md5, and extracts .tar.gz files.
+"""
+
+from __future__ import print_function
+
+import argparse
 import fileinput
 import ftplib
+import hashlib
 import itertools
+import logging
 import os
 import re
-import subprocess
+import shutil
+import socket
 import sys
+import tarfile
 import time
+import urllib
+
 from contextlib import contextmanager
-from distutils.spawn import find_executable
+from sh import blastdbcheck, ErrorReturnCode
+from tempfile import mkdtemp
+from threading import Thread
+from Queue import Queue
 
+import version
 
-REQUIRES = ['blastdbcheck', 'md5sum', 'tar', 'wget']
 BLAST_URL = 'ftp.ncbi.nlm.nih.gov'
 BLAST_PATH = 'blast/db'
+timeout = 10
+socket.setdefaulttimeout(timeout)
 
 
-class MissingFile(Exception):
-    pass
+class DbFile(object):
+    def __init__(self, tarname, output):
+        self.remotetar = "ftp://%s/%s/%s" % (BLAST_URL, BLAST_PATH, tarname)
+        self.tar = "%s/%s" % (os.path.abspath(output), tarname)
+        self.md5 = self.tar + ".md5"
+        self.remotemd5 = self.remotetar + ".md5"
+        self.retries = 0
 
 
 @contextmanager
@@ -29,20 +52,6 @@ def ftp_connect(url, user='anonymous', password='password'):
     finally:
         if connection:
             connection.close()
-
-
-def log(category, message, *args, **kwargs):
-    click.echo('%s: %s' % (
-        click.style(category.ljust(10), fg='cyan'),
-        message.replace('{}', click.style('{}', fg='yellow')).format(
-            *args, **kwargs),
-    ))
-
-
-def check_dependencies(executables):
-    for exe in executables:
-        if not find_executable(exe):
-            sys.exit("`%s` not found in PATH." % exe)
 
 
 def safe_makedir(dname):
@@ -78,17 +87,21 @@ def file_list(url, path=None):
     >>> file_list("ftp.ncbi.nlm.nih.gov", "blast/demo/benchmark/2008")
     ['benchmark.tar.gz', 'benchmark.zip']
     """
+    log = logging.getLogger(__name__)
     files = []
     with ftp_connect(url) as ftp:
         if path:
             ftp.cwd(path)
         try:
             files = ftp.nlst()
-        except ftplib.error_perm, resp:
-            if str(resp) == "550 No files found":
-                raise click.UsageError('No files under %s/%s' % (ftp, path))
+        except ftplib.error_perm, e:
+            if str(e) == "550 No files found":
+                log.error('No files under %s/%s' % (ftp, path))
+                raise
             else:
                 raise
+        except socket.timeout:
+            log.error("Failed to make a connection to %s" % ftp, exc_info=True)
     return files
 
 
@@ -96,8 +109,8 @@ def show_available(files):
     available = set([f.partition(".")[0] for f in files if f.endswith(".gz")])
     available = list(available)
     available.sort()
-    log('Usage', 'Set `-d` to an available database: \n{}',
-        "\n".join(available))
+
+    print(*['Usage: Set `-d` to an available database:'] + available, sep="\n")
     sys.exit(1)
 
 
@@ -109,159 +122,229 @@ def filter_file_list(files, targets):
     >>> filter_file_list(files, targets)
     ['est.tar.gz', 'nr.00.tar.gz']
     """
-    p = re.compile('^(%s)\..*(tar.gz|tar.gz.md5)$' % "|".join(targets))
+    p = re.compile('^(%s)\..*(tar.gz)$' % "|".join(targets))
     return [f for f in files if p.match(f)]
 
 
-def build_commands(files):
-    wget_cmds = []
-    md5_cmds = []
-    tar_cmds = []
-    for f in files:
-        cmd = "wget -q {url}/{dir}/{name} 2> /dev/null".format(url=BLAST_URL,
-            dir=BLAST_PATH, name=f)
-        wget_cmds.append(cmd)
-
-        if f.endswith(".gz"):
-            tar_cmds.append("tar -xzf " + f)
-
-        if f.endswith(".md5"):
-            md5_cmds.append("md5sum -c " + f + " > /dev/null")
-
-    if len(wget_cmds) != len(md5_cmds) + len(tar_cmds):
-        raise MissingFile("The MD5 files should equal the number of archives.")
-
-    return wget_cmds, md5_cmds, tar_cmds
+# def update_permissions(path):
+#     log = logging.getLogger(__name__)
+#     path = os.path.abspath(path)
+#     for f in os.listdir(path):
+#         try:
+#             os.chmod(os.path.join(path, f), 0755)
+#         except OSError:
+#             sys.exit("Unable to update permissions on %s" % path)
+#     log.info("File permissions for %s have been properly updated." % path)
 
 
-def execute_cmds(cmd_list, n=1):
-    with click.progressbar(cmd_list, label="Jobs Ran + Running") as cmds:
-        groups = [(subprocess.Popen(cmd, shell=True) for cmd in cmds)] * n
-        for processes in itertools.izip_longest(*groups):
-            for p in filter(None, processes):
-                p.wait()
+def download(url, localfile, verbose=True):
+    log = logging.getLogger(__name__)
+    num_tries = 0
+    max_tries = 5
 
+    if os.path.exists(localfile):
+        return True
 
-def fix_md5s(files):
-    """
-    Some of the MD5s (at present) contain paths outside of the current
-    directory which is undesirable. This removes the path and leaves the file
-    name in place, ensuring `md5sum -c` has a chance to check the right file.
-    """
-    for f in files:
-        if not f.endswith(".md5"): continue
+    if verbose:
+        log.info("Downloading %s" % url)
+
+    while not os.path.exists(localfile):
         try:
-            # strip path from md5 file name
-            for toks in fileinput.input(f, mode='rU', inplace=True):
-                toks = toks.rstrip("\r\n").split()
-                md5sum = toks[0]
-                file_name = os.path.basename(toks[1])
-                # double space is intentional and required
-                print "  ".join([md5sum, file_name])
+            tmpd = mkdtemp()
+            tmpf = "%s/%s" % (tmpd, os.path.basename(localfile))
+            urllib.urlretrieve(url, tmpf)
+            shutil.move(tmpf, localfile)
+        except IOError:
+            if num_tries > max_tries:
+                raise
+            num_tries += 1
+            time.sleep(5)
+        except Exception, e:
+            log.error("NoneType when downloading %s to %s" % (url, tmpf), exc_info=True)
         finally:
-            fileinput.close()
-    return files
+            remove_dir(tmpd)
+    return True
 
 
-def cleanup(files):
-    for f in files:
+def md5sum(filename, blocksize=65536):
+    hash = hashlib.md5()
+    with open(filename, "r+b") as f:
+        for block in iter(lambda: f.read(blocksize), ""):
+            hash.update(block)
+    return hash.hexdigest()
+
+
+def validate_download(archive, md5file):
+    log = logging.getLogger(__name__)
+    log.info("Validating %s using %s" % (archive, md5file))
+    original = ""
+    with open(md5file) as fh:
+        for line in fh:
+            if not original:
+                try:
+                    original = line.split()[0]
+                except:
+                    print(line)
+                    raise
+    current = md5sum(archive)
+    return current == original
+
+
+def remove_file(f):
+    if f and os.path.exists(f):
         os.remove(f)
 
 
-def update_permissions(path):
-    path = os.path.abspath(path)
-    for f in os.listdir(path):
+def remove_dir(d):
+    if d and os.path.exists(d):
+        shutil.rmtree(d, ignore_errors=True)
+
+
+def extract_archive(archive):
+    log = logging.getLogger(__name__)
+    log.info("Extracting %s" % archive)
+    tmpd = ""
+    success = False
+    try:
+        tmpd = mkdtemp()
+        tmpa = "%s/%s" % (tmpd, os.path.basename(archive))
+        # copy to temp working dir
+        shutil.copyfile(archive, tmpa)
+        # extract files
+        log.debug("Extracting %s to %s" % (tmpa, tmpd))
+        with tarfile.open(tmpa, 'r:gz') as tar:
+            tar.extractall(tmpd)
+        os.remove(tmpa)
+        # copy extracted files back to download dir
+        for f in os.listdir(tmpd):
+            src = os.path.join(tmpd, f)
+            dst = os.path.join(os.path.dirname(archive), f)
+            # account for inventory files
+            if not os.path.exists(dst):
+                shutil.move(src, dst)
+        success = True
+    except:
+        raise
+    finally:
+        remove_dir(tmpd)
+    return success
+
+
+def process_dbfile(q):
+    log = logging.getLogger(__name__)
+    while True:
+        f = q.get()
+        #download gz
         try:
-            os.chmod(os.path.join(path, f), 0755)
-        except OSError:
-            sys.exit("Unable to update permissions on %s" % path)
-    log('Info', "File permissions for {} have been properly updated.", path)
+            proceed = download(f.remotetar, f.tar)
+        except IOError:
+            log.critical("Failed to download %s" % f.remotetar, file=sys.stderr)
+            remove_file(f.tar)
+            proceed = False
+        #download md5
+        if proceed:
+            try:
+                proceed = download(f.remotemd5, f.md5)
+            except IOError:
+                log.critical("Failed to download %s" % f.md5)
+                remove_file(f.md5)
+        # validate the download
+        if proceed:
+            proceed = validate_download(f.tar, f.md5)
+            if not proceed:
+                log.critical("Unable to validate %s using %s." % (f.tar, f.md5))
+                remove_file(f.tar)
+                remove_file(f.md5)
+                log.info("%s and %s have been deleted." % (f.tar, f.md5))
+        # extract the archive
+        if proceed:
+            proceed = extract_archive(f.tar)
+            log.info("%s was successfully extracted." % f.tar)
+        # failed
+        if not proceed:
+            if f.retries < 2:
+                f.retries += 1
+                q.put(f)
+        q.task_done()
 
 
-def validate_dbs(path):
+def validate_dbs(path, dbs):
+    log = logging.getLogger(__name__)
     os.chdir(path)
-    cmd = "blastdbcheck -dir {path} -random 10 -verbosity 4 -no_isam".format(path=path)
-    rc = subprocess.call(cmd, shell=True)
-    return True if rc == 0 else False
+    success = {}
+    for db in dbs:
+        db = os.path.join(path, db)
+        log.info("Validating %s" % db)
+        try:
+            blastdbcheck("-db", db, "-random", 10, "-verbosity", 0, "-no_isam")
+            success[db] = True
+        except ErrorReturnCode:
+            log.critical("%s did not validate" % db)
+            success[db] = False
+    return success
 
 
-def create_symlink(src, dest):
-    if os.path.exists(dest):
-        os.unlink(dest)
-    os.symlink(src, dest)
-    return dest
+def blastdbget(output, database, threads):
+    logging.basicConfig(level=logging.INFO,
+                        format="[%(asctime)s - %(levelname)s] %(message)s",
+                        datefmt="%Y-%m-%d %H:%M:%S")
+    log = logging.getLogger(__name__)
 
-
-@click.command(context_settings={'help_option_names':['-h', '--help']})
-@click.argument('output', required=False, type=click.Path())
-@click.option('-d', '--database', multiple=True,
-              help='Databases to download, eg. "-d nr". Not specifying will '
-              'list the available databases. To add multiple databases, use '
-              'this parameter multiple times.')
-@click.option('-t', '--threads', type=int, default=8, show_default=True,
-              help='The number of concurrent processes (downloads, '
-              'extractions, etc.)')
-def download(output, database, threads):
-    """
-    Downloads listed databases to the output/<date> folder, validates downloads
-    using md5sum, extracts .tar.gz files, then cleans up the output folder.
-    """
-    check_dependencies(REQUIRES)
-
-    # get the contents of the remote blast dir
-    log('Info', 'Communicating with Blast server')
+    log.info("Communicating with BLAST server")
     remote_files = file_list(BLAST_URL, BLAST_PATH)
 
     if not database:
         show_available(remote_files)
 
+    if not "taxdb" in database:
+        database + ("taxdb",)
+
     if output is None:
-        output = os.path.abspath('.')
+        output = safe_makedir(os.path.abspath('.'))
     else:
-        output = os.path.abspath(output)
-    log('Info', 'Using {} as parent directory', output)
+        output = safe_makedir(os.path.abspath(output))
 
-    # filter the list for only what we want
-    to_download = filter_file_list(remote_files, database)
-    total_files = len(to_download)
-    total_archives = total_files / 2
-    if total_files == 0:
-        log('Error', 'No matches found among {}', database)
-        sys.exit(1)
+    log.info('Using %s as working directory' % output)
 
-    log('Info', 'Found {} files matching databases: [{}]', total_files,
-        ', '.join(database))
+    filtered_file_list = filter_file_list(remote_files, database)
 
-    # groups by .gz and .md5; hacky parallelization of jobs
-    to_download.sort(key=lambda x: os.path.splitext(x)[1])
-    wget_cmds, md5_cmds, tar_cmds = build_commands(to_download)
+    q = Queue(maxsize=0)
+    num_threads = 3
 
-    # create local directory structure and start working there
-    today = time.strftime("%Y-%m-%d")
-    # TODO: consider removing existing .tar.gz files
-    results = safe_makedir(os.path.join(output, today))
-    os.chdir(results)
+    for i in range(num_threads):
+        w = Thread(target=process_dbfile, args=(q,))
+        w.daemon = True
+        w.start()
 
-    log('Info', 'Downloading {} files', len(to_download))
-    execute_cmds(wget_cmds, threads)
-    # file paths containing NIH directory structure stripped to basename
-    fix_md5s(to_download)
-    log('Info', 'Validating {} archives', total_archives)
-    execute_cmds(md5_cmds, threads)
-    log('Info', 'Extracting {} archives', total_archives)
-    execute_cmds(tar_cmds, threads)
+    for f in filtered_file_list:
+        q.put(DbFile(f, output))
+    q.join()
 
-    # delete ".tar.gz" and ".tar.gz.md5"
-    log('Info', 'Cleaning up tar files')
-    cleanup(to_download)
+    # validate the database
+    status = validate_dbs(output, database)
+    for db, success in status.iteritems():
+        if success:
+            log.info("%s created successfully" % db)
+            # maybe delete the tgz and md5 files
+        else:
+            log.warn("%s failed validation" % db)
+    log.info("Process complete.")
 
-    update_permissions(results)
-    db_pass = validate_dbs(results)
-    if not db_pass:
-        sys.exit("Unable to validate Blast DBs. Not creating symlink.")
 
-    latest_dir = create_symlink(results, os.path.join(output, "latest"))
-    log('Complete', 'Files available at {}', latest_dir)
+def main():
+    p = argparse.ArgumentParser(description=__doc__,
+            version="%(prog)s " + str(version.__version__),
+            formatter_class=argparse.ArgumentDefaultsHelpFormatter)
+    p.add_argument('output', help='Location to store downloads and extracted blastdb')
+    p.add_argument('-d', '--database', action='append',
+                   help='Databases to download, eg. "-d nr". Not specifying '
+                   'will list the available databases. To add multiple '
+                   'databases, use this parameter multiple times.')
+    p.add_argument('-t', '--threads', type=int, default=8, help='The number '
+                   'of concurrent processes (downloads, extractions, etc.)')
+    args = p.parse_args()
+    blastdbget(args.output, args.database, args.threads)
+
 
 if __name__ == '__main__':
-    download()
+    main()
