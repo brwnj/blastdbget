@@ -26,7 +26,6 @@ from tempfile import mkdtemp
 from threading import Thread
 from Queue import Queue
 
-import version
 
 BLAST_URL = 'ftp.ncbi.nlm.nih.gov'
 BLAST_PATH = 'blast/db'
@@ -333,7 +332,6 @@ def blastdbget(output, database, threads):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__,
-            version="%(prog)s " + str(version.__version__),
             formatter_class=argparse.ArgumentDefaultsHelpFormatter)
     p.add_argument('output', help='Location to store downloads and extracted blastdb')
     p.add_argument('-d', '--database', action='append',
