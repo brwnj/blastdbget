@@ -24,7 +24,7 @@ the end:
 
 # Running
 ```
-$ blastdbget -d 16SMicrobial -d sts -d taxdb $HOME/blast
+$ blastdbget -d 16SMicrobial -d sts -d taxdb $HOME/blast/2015-05-04
 ```
 
 Not specifying `-d` will list Blast DBs that are available.
