@@ -237,7 +237,7 @@ def process_dbfile(q):
         try:
             proceed = download(f.remotetar, f.tar)
         except IOError:
-            log.critical("Failed to download %s" % f.remotetar, file=sys.stderr)
+            log.critical("Failed to download %s" % f.remotetar)
             remove_file(f.tar)
             proceed = False
         #download md5
