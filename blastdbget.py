@@ -276,6 +276,8 @@ def validate_dbs(path, dbs):
     success = {}
     for db in dbs:
         db = os.path.join(path, db)
+        if db.endswith("taxdb"):
+            continue
         log.info("Validating %s" % db)
         try:
             blastdbcheck("-db", db, "-random", 10, "-verbosity", 0, "-no_isam")
