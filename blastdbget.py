@@ -308,14 +308,14 @@ def blastdbget(output, database, threads):
     filtered_file_list = filter_file_list(remote_files, database)
 
     q = Queue(maxsize=0)
-    num_threads = 3
-
-    for i in range(num_threads):
+    for i in range(threads):
         w = Thread(target=process_dbfile, args=(q,))
         w.daemon = True
         w.start()
 
+    log.debug("File manifest:")
     for f in filtered_file_list:
+        log.debug("++++ %s" % f)
         q.put(DbFile(f, output))
     q.join()
 
