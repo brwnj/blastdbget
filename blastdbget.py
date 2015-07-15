@@ -174,6 +174,8 @@ def md5sum(filename, blocksize=65536):
 
 
 def validate_download(archive, md5file):
+    if not os.path.exists(archive) or not os.path.exists(md5file):
+        return False
     log = logging.getLogger(__name__)
     log.info("Validating %s using %s" % (archive, md5file))
     original = ""
@@ -247,6 +249,7 @@ def process_dbfile(q):
             except IOError:
                 log.critical("Failed to download %s" % f.md5)
                 remove_file(f.md5)
+                proceed = False
         # validate the download
         if proceed:
             proceed = validate_download(f.tar, f.md5)
